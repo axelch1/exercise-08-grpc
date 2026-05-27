@@ -1,4 +1,5 @@
 import os
+import time
 import grpc
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
@@ -14,6 +15,21 @@ app = FastAPI(title="Node Registry Gateway")
 def get_stub():
     channel = grpc.insecure_channel(GRPC_HOST)
     return node_registry_pb2_grpc.NodeRegistryStub(channel)
+
+
+def grpc_with_retry(fn, *args, retries=5, delay=2, **kwargs):
+    last_error = None
+    for attempt in range(retries):
+        try:
+            stub = get_stub()
+            return fn(stub, *args, **kwargs)
+        except grpc.RpcError as e:
+            last_error = e
+            if e.code() == grpc.StatusCode.UNAVAILABLE and attempt < retries - 1:
+                time.sleep(delay)
+                continue
+            raise
+    raise last_error
 
 
 class NodeCreate(BaseModel):
@@ -41,14 +57,15 @@ def health():
 
 @app.post("/api/nodes", status_code=201)
 def register_node(node: NodeCreate):
-    stub = get_stub()
     try:
-        response = stub.Register(
-            node_registry_pb2.RegisterRequest(
-                name=node.name,
-                host=node.host,
-                port=node.port,
-            )
+        response = grpc_with_retry(
+            lambda s: s.Register(
+                node_registry_pb2.RegisterRequest(
+                    name=node.name,
+                    host=node.host,
+                    port=node.port,
+                )
+            ),
         )
         return node_to_dict(response)
     except grpc.RpcError as e:
@@ -59,9 +76,8 @@ def register_node(node: NodeCreate):
 
 @app.get("/api/nodes")
 def list_nodes():
-    stub = get_stub()
     try:
-        response = stub.List(node_registry_pb2.Empty())
+        response = grpc_with_retry(lambda s: s.List(node_registry_pb2.Empty()))
         return [node_to_dict(n) for n in response.nodes]
     except grpc.RpcError as e:
         raise HTTPException(status_code=500, detail=str(e.details()))
@@ -69,9 +85,8 @@ def list_nodes():
 
 @app.get("/api/nodes/{name}")
 def get_node(name: str):
-    stub = get_stub()
     try:
-        response = stub.Get(node_registry_pb2.GetRequest(name=name))
+        response = grpc_with_retry(lambda s: s.Get(node_registry_pb2.GetRequest(name=name)))
         return node_to_dict(response)
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
@@ -81,9 +96,8 @@ def get_node(name: str):
 
 @app.delete("/api/nodes/{name}", status_code=204)
 def delete_node(name: str):
-    stub = get_stub()
     try:
-        stub.Delete(node_registry_pb2.DeleteRequest(name=name))
+        grpc_with_retry(lambda s: s.Delete(node_registry_pb2.DeleteRequest(name=name)))
         return Response(status_code=204)
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
