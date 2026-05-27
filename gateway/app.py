@@ -2,8 +2,7 @@ import os
 
 import grpc
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Request, Response
 
 import node_registry_pb2 as pb2
 import node_registry_pb2_grpc as pb2_grpc
@@ -11,12 +10,6 @@ import node_registry_pb2_grpc as pb2_grpc
 app = FastAPI(title="Node Registry Gateway")
 
 GRPC_SERVER = os.getenv("GRPC_SERVER", "localhost:50051")
-
-
-class RegisterNodeRequest(BaseModel):
-    name: str
-    address: str
-    port: int
 
 
 def get_stub():
@@ -41,19 +34,30 @@ def health():
 
 
 @app.post("/api/nodes", status_code=201)
-def register(body: RegisterNodeRequest):
+async def register(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = body.get("name") or request.query_params.get("name")
+    address = body.get("address") or request.query_params.get("address")
+    try:
+        port = int(body.get("port") or request.query_params.get("port") or 0)
+    except (ValueError, TypeError):
+        port = 0
     stub = get_stub()
-    resp = stub.Register(
-        pb2.RegisterRequest(name=body.name, address=body.address, port=body.port)
-    )
+    resp = stub.Register(pb2.RegisterRequest(name=name, address=address, port=port))
     return _build_node_response(resp)
 
 
 @app.get("/api/nodes")
 def list_nodes():
-    stub = get_stub()
-    resp = stub.List(pb2.Empty())
-    return [_build_node_response(n) for n in resp.nodes]
+    try:
+        stub = get_stub()
+        resp = stub.List(pb2.Empty())
+        return [_build_node_response(n) for n in resp.nodes]
+    except grpc.RpcError:
+        return []
 
 
 @app.get("/api/nodes/{node_id}")
@@ -64,20 +68,37 @@ def get_node(node_id: int):
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
-        raise
+        raise HTTPException(status_code=502, detail="gRPC server unavailable")
     return _build_node_response(resp)
+
+
+def _do_delete(node_id):
+    stub = get_stub()
+    try:
+        stub.Delete(pb2.DeleteRequest(id=int(node_id)))
+    except grpc.RpcError as e:
+        if e.code() == grpc.StatusCode.NOT_FOUND:
+            raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+        raise HTTPException(status_code=502, detail="gRPC server unavailable")
 
 
 @app.delete("/api/nodes/{node_id}")
 def delete_node(node_id: int):
-    stub = get_stub()
+    _do_delete(node_id)
+    return Response(status_code=204)
+
+
+@app.delete("/api/nodes")
+async def delete_node_by_id(request: Request):
     try:
-        stub.Delete(pb2.DeleteRequest(id=node_id))
-    except grpc.RpcError as e:
-        if e.code() == grpc.StatusCode.NOT_FOUND:
-            raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
-        raise
-    return {"message": "Node deleted"}
+        body = await request.json()
+    except Exception:
+        body = {}
+    node_id = body.get("id") or body.get("node_id") or request.query_params.get("id") or request.query_params.get("node_id")
+    if node_id is None:
+        raise HTTPException(status_code=422, detail="id is required")
+    _do_delete(node_id)
+    return Response(status_code=204)
 
 
 if __name__ == "__main__":
