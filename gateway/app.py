@@ -33,23 +33,17 @@ def health():
     return {"status": "healthy"}
 
 
-async def _parse_body(request: Request):
-    ct = request.headers.get("content-type", "")
-    if "json" in ct:
-        try:
-            return await request.json()
-        except Exception:
-            return {}
-    try:
-        form = await request.form()
-        return dict(form)
-    except Exception:
-        return {}
-
-
 @app.post("/api/nodes", status_code=201)
 async def register(request: Request):
-    body = await _parse_body(request)
+    try:
+        ct = request.headers.get("content-type", "")
+        if "json" in ct:
+            body = await request.json()
+        else:
+            form = await request.form()
+            body = dict(form)
+    except Exception:
+        body = {}
     name = body.get("name") or request.query_params.get("name")
     address = body.get("address") or request.query_params.get("address")
     try:
@@ -86,28 +80,21 @@ def get_node(node_id: int):
     return _build_node_response(resp)
 
 
-def _do_delete(node_id):
-    stub = get_stub()
-    try:
-        stub.Delete(pb2.DeleteRequest(id=int(node_id)))
-    except grpc.RpcError as e:
-        if e.code() == grpc.StatusCode.NOT_FOUND:
-            raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
-        raise HTTPException(status_code=502, detail="gRPC server unavailable")
-
-
-@app.delete("/api/nodes/{node_id}")
-def delete_node(node_id: int):
-    _do_delete(node_id)
-    return Response(status_code=204)
-
-
 @app.delete("/api/nodes")
-async def delete_node_by_id(request: Request):
-    body = await _parse_body(request)
+async def delete_node(request: Request):
+    try:
+        ct = request.headers.get("content-type", "")
+        if "json" in ct:
+            body = await request.json()
+        else:
+            form = await request.form()
+            body = dict(form)
+    except Exception:
+        body = {}
     node_id = body.get("id") or body.get("node_id") or request.query_params.get("id") or request.query_params.get("node_id")
     if node_id is not None:
-        _do_delete(node_id)
+        stub = get_stub()
+        stub.Delete(pb2.DeleteRequest(id=int(node_id)))
     return Response(status_code=204)
 
 
