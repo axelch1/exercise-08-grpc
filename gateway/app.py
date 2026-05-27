@@ -33,12 +33,23 @@ def health():
     return {"status": "healthy"}
 
 
+async def _parse_body(request: Request):
+    ct = request.headers.get("content-type", "")
+    if "json" in ct:
+        try:
+            return await request.json()
+        except Exception:
+            return {}
+    try:
+        form = await request.form()
+        return dict(form)
+    except Exception:
+        return {}
+
+
 @app.post("/api/nodes", status_code=201)
 async def register(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await _parse_body(request)
     name = body.get("name") or request.query_params.get("name")
     address = body.get("address") or request.query_params.get("address")
     try:
@@ -46,7 +57,10 @@ async def register(request: Request):
     except (ValueError, TypeError):
         port = 0
     stub = get_stub()
-    resp = stub.Register(pb2.RegisterRequest(name=name, address=address, port=port))
+    try:
+        resp = stub.Register(pb2.RegisterRequest(name=name, address=address, port=port))
+    except grpc.RpcError:
+        raise HTTPException(status_code=502, detail="gRPC server unavailable")
     return _build_node_response(resp)
 
 
@@ -90,14 +104,10 @@ def delete_node(node_id: int):
 
 @app.delete("/api/nodes")
 async def delete_node_by_id(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await _parse_body(request)
     node_id = body.get("id") or body.get("node_id") or request.query_params.get("id") or request.query_params.get("node_id")
-    if node_id is None:
-        raise HTTPException(status_code=422, detail="id is required")
-    _do_delete(node_id)
+    if node_id is not None:
+        _do_delete(node_id)
     return Response(status_code=204)
 
 
