@@ -3,6 +3,7 @@ import os
 import grpc
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 import node_registry_pb2 as pb2
 import node_registry_pb2_grpc as pb2_grpc
@@ -12,15 +13,18 @@ app = FastAPI(title="Node Registry Gateway")
 GRPC_SERVER = os.getenv("GRPC_SERVER", "localhost:50051")
 
 
+class RegisterNodeRequest(BaseModel):
+    name: str
+    address: str
+    port: int
+
+
 def get_stub():
     channel = grpc.insecure_channel(GRPC_SERVER)
     return pb2_grpc.NodeRegistryStub(channel)
 
 
-@app.post("/nodes")
-def register(name: str, address: str, port: int):
-    stub = get_stub()
-    resp = stub.Register(pb2.RegisterRequest(name=name, address=address, port=port))
+def _build_node_response(resp):
     return {
         "id": resp.id,
         "name": resp.name,
@@ -31,24 +35,28 @@ def register(name: str, address: str, port: int):
     }
 
 
-@app.get("/nodes")
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+
+@app.post("/api/nodes", status_code=201)
+def register(body: RegisterNodeRequest):
+    stub = get_stub()
+    resp = stub.Register(
+        pb2.RegisterRequest(name=body.name, address=body.address, port=body.port)
+    )
+    return _build_node_response(resp)
+
+
+@app.get("/api/nodes")
 def list_nodes():
     stub = get_stub()
     resp = stub.List(pb2.Empty())
-    return [
-        {
-            "id": n.id,
-            "name": n.name,
-            "address": n.address,
-            "port": n.port,
-            "status": n.status,
-            "created_at": n.created_at,
-        }
-        for n in resp.nodes
-    ]
+    return [_build_node_response(n) for n in resp.nodes]
 
 
-@app.get("/nodes/{node_id}")
+@app.get("/api/nodes/{node_id}")
 def get_node(node_id: int):
     stub = get_stub()
     try:
@@ -57,17 +65,10 @@ def get_node(node_id: int):
         if e.code() == grpc.StatusCode.NOT_FOUND:
             raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
         raise
-    return {
-        "id": resp.id,
-        "name": resp.name,
-        "address": resp.address,
-        "port": resp.port,
-        "status": resp.status,
-        "created_at": resp.created_at,
-    }
+    return _build_node_response(resp)
 
 
-@app.delete("/nodes/{node_id}")
+@app.delete("/api/nodes/{node_id}")
 def delete_node(node_id: int):
     stub = get_stub()
     try:
