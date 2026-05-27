@@ -31,8 +31,7 @@ services:
       context: .
       dockerfile: gateway/Dockerfile
     environment:
-      GRPC_SERVER: grpc-server:50051
-      GATEWAY_PORT: "8080"
+      GRPC_HOST: grpc-server:50051
     ports:
       - "8080:8080"
     depends_on:

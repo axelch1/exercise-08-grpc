@@ -1,106 +1,150 @@
 import os
+import time
+import logging
+import grpc
+from concurrent import futures
 from datetime import datetime, timezone
 
-import grpc
-import sqlalchemy as sa
-from sqlalchemy.orm import Session, declarative_base
+from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.exc import OperationalError
 
-import node_registry_pb2 as pb2
-import node_registry_pb2_grpc as pb2_grpc
+import node_registry_pb2
+import node_registry_pb2_grpc
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://noderegistry:noderegistry@localhost:5432/noderegistry",
-)
+from grpc_health.v1 import health_pb2_grpc, health_pb2
+from grpc_health.v1.health import HealthServicer
+from grpc_reflection.v1alpha import reflection
 
-engine = sa.create_engine(DATABASE_URL)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+engine = None
+for attempt in range(15):
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect():
+            pass
+        logger.info("Connected to database")
+        break
+    except OperationalError:
+        logger.info(f"DB not ready (attempt {attempt + 1}/15), retrying in 3s...")
+        time.sleep(3)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
 class Node(Base):
     __tablename__ = "nodes"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False, index=True)
+    host = Column(String, nullable=False)
+    port = Column(Integer, nullable=False)
+    status = Column(String, default="active")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
-    id = sa.Column(sa.Integer, primary_key=True)
-    name = sa.Column(sa.String, nullable=False)
-    address = sa.Column(sa.String, nullable=False)
-    port = sa.Column(sa.Integer, nullable=False)
-    status = sa.Column(sa.String, default="online")
-    created_at = sa.Column(sa.DateTime, default=lambda: datetime.now(timezone.utc))
+
+Base.metadata.create_all(bind=engine)
 
 
-class NodeRegistryServicer(pb2_grpc.NodeRegistryServicer):
+class NodeRegistryServicer(node_registry_pb2_grpc.NodeRegistryServicer):
+    def _to_proto(self, node):
+        return node_registry_pb2.NodeResponse(
+            id=node.id,
+            name=node.name,
+            host=node.host,
+            port=node.port,
+            status=node.status,
+            created_at=node.created_at.isoformat() if node.created_at else "",
+            updated_at=node.updated_at.isoformat() if node.updated_at else "",
+        )
+
     def Register(self, request, context):
-        with Session(engine) as session:
-            node = Node(
-                name=request.name,
-                address=request.address,
-                port=request.port,
-            )
-            session.add(node)
-            session.commit()
-            session.refresh(node)
-            return pb2.NodeResponse(
-                id=node.id,
-                name=node.name,
-                address=node.address,
-                port=node.port,
-                status=node.status,
-                created_at=node.created_at.isoformat(),
-            )
+        db = SessionLocal()
+        try:
+            existing = db.query(Node).filter(Node.name == request.name).first()
+            if existing:
+                context.set_code(grpc.StatusCode.ALREADY_EXISTS)
+                context.set_details("Node already exists")
+                return node_registry_pb2.NodeResponse()
+            node = Node(name=request.name, host=request.host, port=request.port)
+            db.add(node)
+            db.commit()
+            db.refresh(node)
+            logger.info(f"Registered node: {node.name}")
+            return self._to_proto(node)
+        finally:
+            db.close()
 
     def List(self, request, context):
-        with Session(engine) as session:
-            nodes = session.query(Node).all()
-            return pb2.NodeList(
-                nodes=[
-                    pb2.NodeResponse(
-                        id=n.id,
-                        name=n.name,
-                        address=n.address,
-                        port=n.port,
-                        status=n.status,
-                        created_at=n.created_at.isoformat(),
-                    )
-                    for n in nodes
-                ]
-            )
+        db = SessionLocal()
+        try:
+            nodes = db.query(Node).all()
+            return node_registry_pb2.NodeList(nodes=[self._to_proto(n) for n in nodes])
+        finally:
+            db.close()
 
     def Get(self, request, context):
-        with Session(engine) as session:
-            node = session.get(Node, request.id)
-            if node is None:
+        db = SessionLocal()
+        try:
+            node = db.query(Node).filter(Node.name == request.name).first()
+            if not node:
                 context.set_code(grpc.StatusCode.NOT_FOUND)
-                context.set_details(f"Node {request.id} not found")
-                return pb2.NodeResponse()
-            return pb2.NodeResponse(
-                id=node.id,
-                name=node.name,
-                address=node.address,
-                port=node.port,
-                status=node.status,
-                created_at=node.created_at.isoformat(),
-            )
+                context.set_details("Node not found")
+                return node_registry_pb2.NodeResponse()
+            return self._to_proto(node)
+        finally:
+            db.close()
 
     def Delete(self, request, context):
-        with Session(engine) as session:
-            node = session.get(Node, request.id)
-            if node is None:
+        db = SessionLocal()
+        try:
+            node = db.query(Node).filter(Node.name == request.name).first()
+            if not node:
                 context.set_code(grpc.StatusCode.NOT_FOUND)
-                context.set_details(f"Node {request.id} not found")
-                return pb2.Empty()
-            session.delete(node)
-            session.commit()
-            return pb2.Empty()
+                context.set_details("Node not found")
+                return node_registry_pb2.Empty()
+            node.status = "inactive"
+            node.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.info(f"Deleted node: {node.name}")
+            return node_registry_pb2.Empty()
+        finally:
+            db.close()
 
 
 def serve():
-    Base.metadata.create_all(engine)
-    server = grpc.server(grpc.ThreadPoolExecutor(max_workers=10))
-    pb2_grpc.add_NodeRegistryServicer_to_server(NodeRegistryServicer(), server)
-    port = os.getenv("GRPC_PORT", "50051")
-    server.add_insecure_port(f"0.0.0.0:{port}")
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+
+    node_registry_pb2_grpc.add_NodeRegistryServicer_to_server(
+        NodeRegistryServicer(), server
+    )
+
+    health_servicer = HealthServicer()
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
+    health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
+    health_servicer.set(
+        "noderegistry.NodeRegistry", health_pb2.HealthCheckResponse.SERVING
+    )
+
+    service_names = (
+        node_registry_pb2.DESCRIPTOR.services_by_name["NodeRegistry"].full_name,
+        health_pb2.DESCRIPTOR.services_by_name["Health"].full_name,
+        reflection.SERVICE_NAME,
+    )
+    reflection.enable_server_reflection(service_names, server)
+
+    server.add_insecure_port("[::]:50051")
     server.start()
-    print(f"gRPC server listening on port {port}")
+    logger.info("gRPC server started on port 50051")
     server.wait_for_termination()
 
 

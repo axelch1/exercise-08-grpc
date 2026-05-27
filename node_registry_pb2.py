@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x13node_registry.proto\x12\x0cnoderegistry\"\x07\n\x05\x45mpty\">\n\x0fRegisterRequest\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07\x61\x64\x64ress\x18\x02 \x01(\t\x12\x0c\n\x04port\x18\x03 \x01(\x05\"\x18\n\nGetRequest\x12\n\n\x02id\x18\x01 \x01(\x05\"\x1b\n\rDeleteRequest\x12\n\n\x02id\x18\x01 \x01(\x05\"k\n\x0cNodeResponse\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0f\n\x07\x61\x64\x64ress\x18\x03 \x01(\t\x12\x0c\n\x04port\x18\x04 \x01(\x05\x12\x0e\n\x06status\x18\x05 \x01(\t\x12\x12\n\ncreated_at\x18\x06 \x01(\t\"5\n\x08NodeList\x12)\n\x05nodes\x18\x01 \x03(\x0b\x32\x1a.noderegistry.NodeResponse2\x83\x02\n\x0cNodeRegistry\x12\x45\n\x08Register\x12\x1d.noderegistry.RegisterRequest\x1a\x1a.noderegistry.NodeResponse\x12\x33\n\x04List\x12\x13.noderegistry.Empty\x1a\x16.noderegistry.NodeList\x12;\n\x03Get\x12\x18.noderegistry.GetRequest\x1a\x1a.noderegistry.NodeResponse\x12:\n\x06\x44\x65lete\x12\x1b.noderegistry.DeleteRequest\x1a\x13.noderegistry.Emptyb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x13node_registry.proto\x12\x0cnoderegistry\"\x07\n\x05\x45mpty\";\n\x0fRegisterRequest\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0c\n\x04host\x18\x02 \x01(\t\x12\x0c\n\x04port\x18\x03 \x01(\x05\"\x1a\n\nGetRequest\x12\x0c\n\x04name\x18\x01 \x01(\t\"\x1d\n\rDeleteRequest\x12\x0c\n\x04name\x18\x01 \x01(\t\"|\n\x0cNodeResponse\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04host\x18\x03 \x01(\t\x12\x0c\n\x04port\x18\x04 \x01(\x05\x12\x0e\n\x06status\x18\x05 \x01(\t\x12\x12\n\ncreated_at\x18\x06 \x01(\t\x12\x12\n\nupdated_at\x18\x07 \x01(\t\"5\n\x08NodeList\x12)\n\x05nodes\x18\x01 \x03(\x0b\x32\x1a.noderegistry.NodeResponse2\x83\x02\n\x0cNodeRegistry\x12\x45\n\x08Register\x12\x1d.noderegistry.RegisterRequest\x1a\x1a.noderegistry.NodeResponse\x12\x33\n\x04List\x12\x13.noderegistry.Empty\x1a\x16.noderegistry.NodeList\x12;\n\x03Get\x12\x18.noderegistry.GetRequest\x1a\x1a.noderegistry.NodeResponse\x12:\n\x06\x44\x65lete\x12\x1b.noderegistry.DeleteRequest\x1a\x13.noderegistry.Emptyb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,15 +34,15 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_EMPTY']._serialized_start=37
   _globals['_EMPTY']._serialized_end=44
   _globals['_REGISTERREQUEST']._serialized_start=46
-  _globals['_REGISTERREQUEST']._serialized_end=108
-  _globals['_GETREQUEST']._serialized_start=110
-  _globals['_GETREQUEST']._serialized_end=134
-  _globals['_DELETEREQUEST']._serialized_start=136
-  _globals['_DELETEREQUEST']._serialized_end=163
-  _globals['_NODERESPONSE']._serialized_start=165
-  _globals['_NODERESPONSE']._serialized_end=272
-  _globals['_NODELIST']._serialized_start=274
-  _globals['_NODELIST']._serialized_end=327
-  _globals['_NODEREGISTRY']._serialized_start=330
-  _globals['_NODEREGISTRY']._serialized_end=589
+  _globals['_REGISTERREQUEST']._serialized_end=105
+  _globals['_GETREQUEST']._serialized_start=107
+  _globals['_GETREQUEST']._serialized_end=133
+  _globals['_DELETEREQUEST']._serialized_start=135
+  _globals['_DELETEREQUEST']._serialized_end=164
+  _globals['_NODERESPONSE']._serialized_start=166
+  _globals['_NODERESPONSE']._serialized_end=290
+  _globals['_NODELIST']._serialized_start=292
+  _globals['_NODELIST']._serialized_end=345
+  _globals['_NODEREGISTRY']._serialized_start=348
+  _globals['_NODEREGISTRY']._serialized_end=607
 # @@protoc_insertion_point(module_scope)

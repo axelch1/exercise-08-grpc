@@ -1,102 +1,91 @@
 import os
-
 import grpc
-import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Response
+from pydantic import BaseModel, Field
 
-import node_registry_pb2 as pb2
-import node_registry_pb2_grpc as pb2_grpc
+import node_registry_pb2
+import node_registry_pb2_grpc
+
+GRPC_HOST = os.environ.get("GRPC_HOST", "grpc-server:50051")
 
 app = FastAPI(title="Node Registry Gateway")
 
-GRPC_SERVER = os.getenv("GRPC_SERVER", "localhost:50051")
-
 
 def get_stub():
-    channel = grpc.insecure_channel(GRPC_SERVER)
-    return pb2_grpc.NodeRegistryStub(channel)
+    channel = grpc.insecure_channel(GRPC_HOST)
+    return node_registry_pb2_grpc.NodeRegistryStub(channel)
 
 
-def _build_node_response(resp):
+class NodeCreate(BaseModel):
+    name: str
+    host: str
+    port: int = Field(gt=0, le=65535)
+
+
+def node_to_dict(node):
     return {
-        "id": resp.id,
-        "name": resp.name,
-        "address": resp.address,
-        "port": resp.port,
-        "status": resp.status,
-        "created_at": resp.created_at,
+        "id": node.id,
+        "name": node.name,
+        "host": node.host,
+        "port": node.port,
+        "status": node.status,
+        "created_at": node.created_at,
+        "updated_at": node.updated_at,
     }
 
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {"status": "ok"}
 
 
 @app.post("/api/nodes", status_code=201)
-async def register(request: Request):
-    try:
-        ct = request.headers.get("content-type", "")
-        if "json" in ct:
-            body = await request.json()
-        else:
-            form = await request.form()
-            body = dict(form)
-    except Exception:
-        body = {}
-    name = body.get("name") or request.query_params.get("name")
-    address = body.get("address") or request.query_params.get("address")
-    try:
-        port = int(body.get("port") or request.query_params.get("port") or 0)
-    except (ValueError, TypeError):
-        port = 0
+def register_node(node: NodeCreate):
     stub = get_stub()
     try:
-        resp = stub.Register(pb2.RegisterRequest(name=name, address=address, port=port))
-    except grpc.RpcError:
-        raise HTTPException(status_code=502, detail="gRPC server unavailable")
-    return _build_node_response(resp)
+        response = stub.Register(
+            node_registry_pb2.RegisterRequest(
+                name=node.name,
+                host=node.host,
+                port=node.port,
+            )
+        )
+        return node_to_dict(response)
+    except grpc.RpcError as e:
+        if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+            raise HTTPException(status_code=409, detail="Node already exists")
+        raise HTTPException(status_code=500, detail=str(e.details()))
 
 
 @app.get("/api/nodes")
 def list_nodes():
-    try:
-        stub = get_stub()
-        resp = stub.List(pb2.Empty())
-        return [_build_node_response(n) for n in resp.nodes]
-    except grpc.RpcError:
-        return []
-
-
-@app.get("/api/nodes/{node_id}")
-def get_node(node_id: int):
     stub = get_stub()
     try:
-        resp = stub.Get(pb2.GetRequest(id=node_id))
+        response = stub.List(node_registry_pb2.Empty())
+        return [node_to_dict(n) for n in response.nodes]
+    except grpc.RpcError as e:
+        raise HTTPException(status_code=500, detail=str(e.details()))
+
+
+@app.get("/api/nodes/{name}")
+def get_node(name: str):
+    stub = get_stub()
+    try:
+        response = stub.Get(node_registry_pb2.GetRequest(name=name))
+        return node_to_dict(response)
     except grpc.RpcError as e:
         if e.code() == grpc.StatusCode.NOT_FOUND:
-            raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
-        raise HTTPException(status_code=502, detail="gRPC server unavailable")
-    return _build_node_response(resp)
+            raise HTTPException(status_code=404, detail="Node not found")
+        raise HTTPException(status_code=500, detail=str(e.details()))
 
 
-@app.delete("/api/nodes")
-async def delete_node(request: Request):
+@app.delete("/api/nodes/{name}", status_code=204)
+def delete_node(name: str):
+    stub = get_stub()
     try:
-        ct = request.headers.get("content-type", "")
-        if "json" in ct:
-            body = await request.json()
-        else:
-            form = await request.form()
-            body = dict(form)
-    except Exception:
-        body = {}
-    node_id = body.get("id") or body.get("node_id") or request.query_params.get("id") or request.query_params.get("node_id")
-    if node_id is not None:
-        stub = get_stub()
-        stub.Delete(pb2.DeleteRequest(id=int(node_id)))
-    return Response(status_code=204)
-
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("GATEWAY_PORT", "8080")))
+        stub.Delete(node_registry_pb2.DeleteRequest(name=name))
+        return Response(status_code=204)
+    except grpc.RpcError as e:
+        if e.code() == grpc.StatusCode.NOT_FOUND:
+            raise HTTPException(status_code=404, detail="Node not found")
+        raise HTTPException(status_code=500, detail=str(e.details()))
